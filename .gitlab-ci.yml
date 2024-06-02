@@ -1,0 +1,46 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DEPLOYMENT: uatech-landing-page
+  REPO_PATH: Workspace/repos
+  TAG_COMMIT: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME:release-$CI_PIPELINE_IID
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == 'main'
+
+.sign_to_server:
+  before_script:
+    - chmod og= $ID_RSA
+    - apk update && apk add openssh-client
+
+build:
+  image: docker:latest
+  stage: build
+  services:
+    - docker:dind
+  script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+    - docker build -t $TAG_COMMIT .
+    - docker push $TAG_COMMIT
+  only:
+    refs:
+      - main
+
+deploy:
+  stage: deploy
+  image: alpine:latest
+  extends: .sign_to_server
+  script:
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "cd $REPO_PATH && git clone $CI_REPOSITORY_URL &&
+      cd $CI_PROJECT_NAME &&
+      git checkout $CI_COMMIT_REF_NAME &&
+      helm upgrade --install --set-string image.tag=release-$CI_PIPELINE_IID --set-string image.repository=$CI_REGISTRY_IMAGE/$CI_COMMIT_REF_NAME $DEPLOYMENT ./deploy"
+    - ssh -i $ID_RSA -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "cd $REPO_PATH && rm -rf $CI_PROJECT_NAME"
+  dependencies:
+    - build
+  only:
+    refs:
+      - main
